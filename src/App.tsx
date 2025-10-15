@@ -1,24 +1,39 @@
-import React from 'react';
-import logo from './logo.svg';
-import './App.css';
+import React, { useState } from 'react';
+import Room from './components/Room';
+import RoomJoin from './components/RoomJoin';
 
 function App() {
+  const [roomName, setRoomName] = useState<string>('');
+  const [participantName, setParticipantName] = useState<string>('');
+  const [isInRoom, setIsInRoom] = useState<boolean>(false);
+  const [isRoomCreator, setIsRoomCreator] = useState<boolean>(false);
+
+  const joinRoom = (room: string, name: string, creator: boolean = false) => {
+    setRoomName(room);
+    setParticipantName(name);
+    setIsRoomCreator(creator);
+    setIsInRoom(true);
+  };
+
+  const leaveRoom = () => {
+    setIsInRoom(false);
+    setRoomName('');
+    setParticipantName('');
+    setIsRoomCreator(false);
+  };
+
   return (
     <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.tsx</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
+      {!isInRoom ? (
+        <RoomJoin onJoinRoom={joinRoom} />
+      ) : (
+        <Room
+          roomName={roomName}
+          participantName={participantName}
+          isRoomCreator={isRoomCreator}
+          onLeaveRoom={leaveRoom}
+        />
+      )}
     </div>
   );
 }
