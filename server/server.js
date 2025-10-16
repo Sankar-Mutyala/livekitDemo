@@ -11,8 +11,8 @@ app.use(cors({
 }));
 
 // Replace with your actual LiveKit API key and secret from LiveKit Cloud
-const API_KEY = process.env.LIVEKIT_API_KEY || 'API5pPkBZcAQWsB';
-const API_SECRET = process.env.LIVEKIT_API_SECRET || 'YIgMrYwK2lakRIgTqCqeb1SfWF8Qk1TRqpR7t4rj9bw';
+const API_KEY = process.env.LIVEKIT_API_KEY || 'APIxC7TmCridcUg';
+const API_SECRET = process.env.LIVEKIT_API_SECRET || 'pjNoDnaUr8lU7wIkJcdQLHENiQztmOcgguA2whQpgYL';
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
