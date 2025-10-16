@@ -15,7 +15,7 @@ Update `src/config/livekit.ts`:
 
 ```typescript
 export const LIVEKIT_CONFIG = {
-  serverUrl: 'wss://your-project.livekit.cloud', // Your LiveKit Cloud URL
+  serverUrl: 'wss://responsive-preview-9g82oqy0.livekit.cloud', // Your LiveKit Cloud URL
   generateToken: async (roomName: string, participantName: string) => {
     const response = await fetch('/api/token', {
       method: 'POST',

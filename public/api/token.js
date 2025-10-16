@@ -8,8 +8,8 @@ const app = express();
 app.use(express.json());
 
 // Development API key and secret (replace with your actual values)
-const API_KEY = 'APIxC7TmCridcUg';
-const API_SECRET = 'pjNoDnaUr8lU7wIkJcdQLHENiQztmOcgguA2whQpgYL';
+const API_KEY = 'API5pPkBZcAQWsB';
+const API_SECRET = 'YIgMrYwK2lakRIgTqCqeb1SfWF8Qk1TRqpR7t4rj9bw';
 
 app.post('/api/token', (req, res) => {
   try {
