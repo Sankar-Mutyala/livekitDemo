@@ -340,17 +340,51 @@ const Room: React.FC<RoomProps> = ({ roomName, participantName, isRoomCreator, o
         );
       }
     } else {
-      // Grid layout for 4+ participants
+      // Deterministic mappings for common counts (1,2,3,4,6,9,12).
+      // This ensures consistent UX and avoids fractional grid math variations.
+      const count = participantCount;
+      let cols = Math.max(1, Math.ceil(Math.sqrt(count)));
+      let rows = Math.max(1, Math.ceil(count / cols));
+
+      // Map exact layouts per your scenarios for better control
+      switch (count) {
+        case 1:
+          cols = 1; rows = 1; break;
+        case 2:
+          cols = 2; rows = 1; break;
+        case 3:
+          cols = 2; rows = 2; break; // we'll center the bottom tile via CSS class
+        case 4:
+          cols = 2; rows = 2; break;
+        case 6:
+          cols = 3; rows = 2; break;
+        case 9:
+          cols = 3; rows = 3; break;
+        case 12:
+          cols = 4; rows = 3; break;
+        default:
+          cols = Math.max(1, Math.ceil(Math.sqrt(count)));
+          rows = Math.max(1, Math.ceil(count / cols));
+      }
+
       return (
-        <div className="grid-layout">
-          {participants.map((participantData, index) => (
-            <VideoTile 
-              key={participantData.participant.identity}
-              participantData={participantData} 
-              className="grid-video" 
-              isMain={false}
-            />
-          ))}
+        <div
+          className="participants-grid-grid"
+          // @ts-ignore custom CSS properties
+          style={{ ['--cols']: cols, ['--rows']: rows, ['--gap']: '0.5rem' } as React.CSSProperties}
+        >
+          {participants.map((participantData, idx) => {
+            // for 3 participants, center the last tile on the bottom row
+            const extraClass = (count === 3 && idx === 2) ? 'span-bottom' : '';
+            return (
+              <VideoTile
+                key={participantData.participant.identity}
+                participantData={participantData}
+                className={`grid-video ${extraClass}`}
+                isMain={false}
+              />
+            );
+          })}
         </div>
       );
     }
