@@ -23,6 +23,9 @@ const Room: React.FC<RoomProps> = ({ roomName, participantName, isRoomCreator, o
   const [isConnecting, setIsConnecting] = useState(true);
   const [retryCount, setRetryCount] = useState(0);
   const [connectionAttempts, setConnectionAttempts] = useState(0);
+  const [layoutMode, setLayoutMode] = useState<'gallery' | 'speaker'>('gallery');
+  const [audioLevels, setAudioLevels] = useState<Record<string, number>>({});
+  const [dominantSpeaker, setDominantSpeaker] = useState<string | null>(null);
   const liveKitManagerRef = useRef<LiveKitManager | null>(null);
 
   useEffect(() => {
@@ -123,6 +126,24 @@ const Room: React.FC<RoomProps> = ({ roomName, participantName, isRoomCreator, o
         alert('Failed to toggle camera. Please try again.');
       }
     }
+  };
+
+  const onAudioLevel = (identity: string, level: number) => {
+    // smooth levels with exponential moving average
+    setAudioLevels(prev => {
+      const prevLevel = prev[identity] ?? 0;
+      const smoothed = prevLevel * 0.8 + level * 0.2;
+      const next = { ...prev, [identity]: smoothed };
+      // compute dominant speaker (simple: highest smoothed level above threshold)
+      const entries = Object.entries(next);
+      let maxId: string | null = null;
+      let maxVal = 0.01; // threshold
+      for (const [id, v] of entries) {
+        if (v > maxVal) { maxVal = v; maxId = id; }
+      }
+      setDominantSpeaker(maxId);
+      return next;
+    });
   };
 
   const toggleScreenShare = async () => {
@@ -367,6 +388,26 @@ const Room: React.FC<RoomProps> = ({ roomName, participantName, isRoomCreator, o
           rows = Math.max(1, Math.ceil(count / cols));
       }
 
+      // Speaker mode: if enabled and we have a dominant speaker, promote them
+      if (layoutMode === 'speaker' && dominantSpeaker) {
+        const main = participants.find(p => p.participant.identity === dominantSpeaker) || participants[0];
+        const others = participants.filter(p => p.participant.identity !== main.participant.identity);
+        return (
+          <div className="speaker-view flex-1 flex flex-col">
+            <div className="speaker-main flex-1">
+              <VideoTile participantData={main} className="main-video" isMain={true} onAudioLevel={onAudioLevel} />
+            </div>
+            <div className="speaker-others" style={{height: '33%'}}>
+              <div className="participants-grid-grid" style={{ ['--cols']: Math.max(1, Math.ceil(Math.sqrt(others.length))), ['--rows']: 1 } as React.CSSProperties}>
+                {others.map(o => (
+                  <VideoTile key={o.participant.identity} participantData={o} className="grid-video" isMain={false} onAudioLevel={onAudioLevel} />
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      }
+
       return (
         <div
           className="participants-grid-grid"
@@ -382,6 +423,7 @@ const Room: React.FC<RoomProps> = ({ roomName, participantName, isRoomCreator, o
                 participantData={participantData}
                 className={`grid-video ${extraClass}`}
                 isMain={false}
+                onAudioLevel={onAudioLevel}
               />
             );
           })}
@@ -464,7 +506,7 @@ const Room: React.FC<RoomProps> = ({ roomName, participantName, isRoomCreator, o
           </div>
           <span className="text-sm text-zinc-400">{participants.length} participant{participants.length !== 1 ? 's' : ''}</span>
         </div>
-        <div className="flex gap-2">
+  <div className="flex gap-2">
           <Button 
             variant="outline"
             onClick={debugConnection}
@@ -502,6 +544,13 @@ const Room: React.FC<RoomProps> = ({ roomName, participantName, isRoomCreator, o
               <path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/>
             </svg>
             Share
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => setLayoutMode(prev => prev === 'gallery' ? 'speaker' : 'gallery')}
+            className="bg-indigo-500/10 border-indigo-500/30 text-indigo-300 hover:bg-indigo-500/20"
+          >
+            {layoutMode === 'gallery' ? 'Speaker View' : 'Gallery View'}
           </Button>
           <Button 
             variant="destructive"

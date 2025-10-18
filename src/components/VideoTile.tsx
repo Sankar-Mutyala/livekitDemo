@@ -6,11 +6,15 @@ interface VideoTileProps {
   participantData: ParticipantData;
   className?: string;
   isMain?: boolean;
+  onAudioLevel?: (identity: string, level: number) => void;
 }
 
-const VideoTile: React.FC<VideoTileProps> = ({ participantData, className, isMain = false }) => {
+const VideoTile: React.FC<VideoTileProps> = ({ participantData, className, isMain = false, onAudioLevel }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const rafRef = useRef<number | null>(null);
 
   useEffect(() => {
     console.log('VideoTile useEffect:', {
@@ -48,6 +52,48 @@ const VideoTile: React.FC<VideoTileProps> = ({ participantData, className, isMai
       }
     }
 
+    // Setup WebAudio analyser to report audio level if callback provided
+    if (audioRef.current && typeof onAudioLevel === 'function' && !analyserRef.current) {
+      try {
+        // Create AudioContext lazily
+        if (!audioContextRef.current) {
+          audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        }
+
+        const audioCtx = audioContextRef.current;
+        const source = audioCtx.createMediaElementSource(audioRef.current);
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 2048;
+        source.connect(analyser);
+        analyser.connect(audioCtx.destination);
+        analyserRef.current = analyser;
+
+        const data = new Uint8Array(analyser.frequencyBinCount);
+
+        const tick = () => {
+          try {
+            analyser.getByteFrequencyData(data);
+            // compute RMS
+            let sum = 0;
+            for (let i = 0; i < data.length; i++) {
+              const v = data[i] / 255;
+              sum += v * v;
+            }
+            const rms = Math.sqrt(sum / data.length);
+            // report level (0..1)
+            onAudioLevel?.(participantData.participant.identity, rms);
+          } catch (e) {
+            // ignore occasional errors during detach
+          }
+          rafRef.current = requestAnimationFrame(tick);
+        };
+
+        rafRef.current = requestAnimationFrame(tick);
+      } catch (e) {
+        console.warn('Failed to create audio analyser:', e);
+      }
+    }
+
     // Cleanup function
     return () => {
       if (participantData.videoTrack && videoRef.current) {
@@ -64,6 +110,16 @@ const VideoTile: React.FC<VideoTileProps> = ({ participantData, className, isMai
           console.error('Failed to detach audio track:', error);
         }
       }
+      // cleanup analyser
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      if (analyserRef.current) {
+        try { analyserRef.current.disconnect(); } catch {};
+        analyserRef.current = null;
+      }
+      // Note: do not close shared AudioContext here as it may be reused
     };
   }, [participantData.videoTrack, participantData.audioTrack, participantData.isCameraOn]);
 

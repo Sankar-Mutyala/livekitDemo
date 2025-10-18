@@ -141,6 +141,22 @@
   border: 1px solid rgba(255,255,255,0.03);
 }
 
+/* Speaker view: large main tile and compact strip of others */
+.speaker-view {
+  height: 100%;
+}
+.speaker-view .speaker-main {
+  height: 67%;
+}
+.speaker-view .speaker-others {
+  height: 33%;
+  padding-top: 8px;
+}
+.speaker-view .participants-grid-grid {
+  height: 100%;
+  gap: 8px;
+}
+
 /* For 3 participants: center the bottom tile by spanning appropriate columns */
 .participants-grid-grid .grid-video.span-bottom {
   justify-self: center;
