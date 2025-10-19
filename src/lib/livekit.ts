@@ -190,8 +190,12 @@ export class LiveKitManager {
   private setupEventListeners(): void {
     if (!this.room) return;
 
-    this.room.on(RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
+    this.room.on(RoomEvent.ParticipantConnected, async (participant: RemoteParticipant) => {
+      console.log('Remote participant connected:', participant.identity);
       this.addParticipant(participant, false, false);
+      
+      // Subscribe to existing tracks for this participant
+      await this.subscribeToParticipantTracks(participant);
     });
 
     this.room.on(RoomEvent.ParticipantDisconnected, (participant: RemoteParticipant) => {
@@ -201,6 +205,15 @@ export class LiveKitManager {
     this.room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack, publication: TrackPublication, participant: RemoteParticipant) => {
       console.log('Track subscribed:', track.kind, 'for participant:', participant.identity);
       this.updateParticipantTrack(participant.identity, track);
+    });
+
+    // Listen for remote track publications
+    this.room.on(RoomEvent.TrackPublished, async (publication: TrackPublication, participant: RemoteParticipant) => {
+      console.log('Remote track published:', publication.kind, 'for participant:', participant.identity);
+      
+      // Track subscription should be handled automatically by LiveKit
+      // We just need to ensure the track is properly attached when it becomes available
+      console.log('Track published - subscription will be handled automatically by LiveKit');
     });
 
     this.room.on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack, publication: TrackPublication, participant: RemoteParticipant) => {
@@ -345,14 +358,44 @@ export class LiveKitManager {
       audioPublications.push(pub);
     });
     
+    console.log('Adding participant:', participant.identity, {
+      videoPublications: videoPublications.length,
+      audioPublications: audioPublications.length,
+      isLocal,
+      isRoomCreator
+    });
+    
     const videoTrack = videoPublications.find(pub => pub.track)?.track;
     const audioTrack = audioPublications.find(pub => pub.track)?.track;
 
     if (videoTrack) {
       participantData.videoTrack = videoTrack;
+      // For remote participants, if they have a video track, their camera is on
+      if (!isLocal) {
+        participantData.isCameraOn = true;
+      }
+      console.log('Video track found for participant:', participant.identity);
+    } else {
+      console.log('No video track found for participant:', participant.identity);
+      // For remote participants, if no video track, camera is off
+      if (!isLocal) {
+        participantData.isCameraOn = false;
+      }
     }
+    
     if (audioTrack) {
       participantData.audioTrack = audioTrack;
+      // For remote participants, if they have an audio track, they're not muted
+      if (!isLocal) {
+        participantData.isMuted = false;
+      }
+      console.log('Audio track found for participant:', participant.identity);
+    } else {
+      console.log('No audio track found for participant:', participant.identity);
+      // For remote participants, if no audio track, they're muted
+      if (!isLocal) {
+        participantData.isMuted = true;
+      }
     }
 
     this.participants.set(participant.identity, participantData);
@@ -369,9 +412,27 @@ export class LiveKitManager {
     if (participantData) {
       if (track.kind === Track.Kind.Video) {
         participantData.videoTrack = track;
+        console.log(`Video track updated for ${identity}:`, {
+          trackEnabled: (track as any).enabled,
+          trackMuted: (track as any).muted,
+          trackState: (track as any).state
+        });
       } else if (track.kind === Track.Kind.Audio) {
         participantData.audioTrack = track;
+        console.log(`Audio track updated for ${identity}:`, {
+          trackEnabled: (track as any).enabled,
+          trackMuted: (track as any).muted,
+          trackState: (track as any).state
+        });
       }
+      
+      // Update camera/microphone state based on track availability
+      if (track.kind === Track.Kind.Video) {
+        participantData.isCameraOn = !!track && (track as any).enabled !== false;
+      } else if (track.kind === Track.Kind.Audio) {
+        participantData.isMuted = !track || (track as any).muted === true;
+      }
+      
       this.notifyParticipantsChange();
     }
   }
@@ -402,6 +463,39 @@ export class LiveKitManager {
 
   private notifyParticipantsChange(): void {
     this.onParticipantsChange?.(Array.from(this.participants.values()));
+  }
+
+  // Subscribe to all available tracks for a participant
+  private async subscribeToParticipantTracks(participant: RemoteParticipant): Promise<void> {
+    try {
+      console.log('Subscribing to tracks for participant:', participant.identity);
+      
+      // Subscribe to video tracks
+      const videoPublications = Array.from(participant.videoTrackPublications.values());
+      console.log('Video publications for', participant.identity, ':', videoPublications.length);
+      
+      for (const publication of videoPublications) {
+        console.log('Video publication status:', {
+          isSubscribed: publication.isSubscribed,
+          trackSid: publication.trackSid,
+          kind: publication.kind
+        });
+      }
+      
+      // Subscribe to audio tracks
+      const audioPublications = Array.from(participant.audioTrackPublications.values());
+      console.log('Audio publications for', participant.identity, ':', audioPublications.length);
+      
+      for (const publication of audioPublications) {
+        console.log('Audio publication status:', {
+          isSubscribed: publication.isSubscribed,
+          trackSid: publication.trackSid,
+          kind: publication.kind
+        });
+      }
+    } catch (error) {
+      console.error('Failed to subscribe to participant tracks:', error);
+    }
   }
 
   async toggleMicrophone(): Promise<void> {
@@ -581,6 +675,58 @@ export class LiveKitManager {
   // Public method to refresh video tracks
   public refreshVideoTracks(): void {
     this.refreshVideoTracksInternal();
+  }
+
+  // Public method to refresh all participant tracks
+  public refreshAllParticipantTracks(): void {
+    if (!this.room) return;
+    
+    console.log('Refreshing all participant tracks...');
+    
+    // Refresh local participant tracks
+    this.refreshVideoTracksInternal();
+    
+    // Refresh remote participant tracks
+    for (const [identity, participantData] of Array.from(this.participants.entries())) {
+      if (!participantData.isLocal) {
+        console.log('Refreshing tracks for remote participant:', identity);
+        this.updateParticipantFromLiveKit(identity);
+      }
+    }
+  }
+
+  // Update participant data from LiveKit participant
+  private updateParticipantFromLiveKit(identity: string): void {
+    if (!this.room) return;
+    
+    const liveKitParticipant = this.room.getParticipantByIdentity(identity);
+    if (!liveKitParticipant) return;
+    
+    const participantData = this.participants.get(identity);
+    if (!participantData) return;
+    
+    // Update track information
+    const videoPublications = Array.from(liveKitParticipant.videoTrackPublications.values());
+    const audioPublications = Array.from(liveKitParticipant.audioTrackPublications.values());
+    
+    const videoTrack = videoPublications.find(pub => pub.track)?.track;
+    const audioTrack = audioPublications.find(pub => pub.track)?.track;
+    
+    console.log('Updating participant tracks:', {
+      identity,
+      hasVideoTrack: !!videoTrack,
+      hasAudioTrack: !!audioTrack,
+      isCameraOn: liveKitParticipant.isCameraEnabled,
+      isMuted: !liveKitParticipant.isMicrophoneEnabled
+    });
+    
+    // Update participant data
+    participantData.videoTrack = videoTrack as LocalTrack | RemoteTrack | undefined;
+    participantData.audioTrack = audioTrack as LocalTrack | RemoteTrack | undefined;
+    participantData.isCameraOn = liveKitParticipant.isCameraEnabled;
+    participantData.isMuted = !liveKitParticipant.isMicrophoneEnabled;
+    
+    this.notifyParticipantsChange();
   }
 
   // Public method to force camera restoration

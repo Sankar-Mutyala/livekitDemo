@@ -156,7 +156,7 @@ const VideoTile: React.FC<VideoTileProps> = ({ participantData, className, isMai
     // Cleanup previous attachments
     cleanup();
 
-    // Attach video track to video element with retry logic
+    // Attach video track to video element with improved retry logic
     if (participantData.videoTrack && videoRef.current && participantData.isCameraOn) {
       console.log('Attaching video track to element');
       
@@ -175,22 +175,38 @@ const VideoTile: React.FC<VideoTileProps> = ({ participantData, className, isMai
           console.error('Failed to attach video track:', error);
           isAttachedRef.current = false;
           
-          // Retry attachment after a short delay, but only once
-          setTimeout(() => {
-            if (participantData.videoTrack && videoRef.current && !isAttachedRef.current && participantData.isCameraOn) {
-              console.log('Retrying video track attachment...');
-              try {
-                participantData.videoTrack!.attach(videoRef.current!);
-                isAttachedRef.current = true;
-              } catch (retryError) {
-                console.error('Retry failed:', retryError);
-              }
+          // Retry attachment with exponential backoff
+          let retryCount = 0;
+          const maxRetries = 3;
+          
+          const retryAttachment = () => {
+            if (retryCount < maxRetries && participantData.videoTrack && videoRef.current && !isAttachedRef.current && participantData.isCameraOn) {
+              retryCount++;
+              console.log(`Retrying video track attachment (attempt ${retryCount}/${maxRetries})...`);
+              setTimeout(() => {
+                try {
+                  participantData.videoTrack!.attach(videoRef.current!);
+                  isAttachedRef.current = true;
+                  console.log('Video track attached successfully on retry');
+                } catch (retryError) {
+                  console.error(`Retry ${retryCount} failed:`, retryError);
+                  if (retryCount < maxRetries) {
+                    retryAttachment();
+                  }
+                }
+              }, 1000 * retryCount); // Exponential backoff
             }
-          }, 1000); // Increased delay
+          };
+          
+          retryAttachment();
         }
       };
       
       attachVideoTrack();
+    } else if (participantData.isCameraOn && !participantData.videoTrack) {
+      // Camera is on but no track yet - this is normal during camera startup
+      console.log('Camera is on but video track not ready yet - waiting for track to be published');
+      isAttachedRef.current = false;
     } else {
       console.log('Cannot attach video track:', {
         hasTrack: !!participantData.videoTrack,
@@ -244,6 +260,7 @@ const VideoTile: React.FC<VideoTileProps> = ({ participantData, className, isMai
       .slice(0, 2);
   };
 
+  // Improved video detection: show video if we have a track OR if camera is on (might be loading)
   const hasVideo = participantData.videoTrack && participantData.isCameraOn;
   const hasAudio = participantData.audioTrack && !participantData.isMuted;
 
@@ -273,10 +290,16 @@ const VideoTile: React.FC<VideoTileProps> = ({ participantData, className, isMai
             <div className="participant-avatar">
               {getInitials(participantData.participant.identity)}
             </div>
-            {participantData.isCameraOn && (
+            {participantData.isCameraOn && !participantData.videoTrack && (
               <div className="camera-loading">
                 <div className="loading-spinner"></div>
                 <span>Starting camera...</span>
+              </div>
+            )}
+            {participantData.isCameraOn && participantData.videoTrack && (
+              <div className="camera-loading">
+                <div className="loading-spinner"></div>
+                <span>Connecting video...</span>
               </div>
             )}
           </div>

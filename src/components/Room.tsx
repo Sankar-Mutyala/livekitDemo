@@ -108,6 +108,73 @@ const Room: React.FC<RoomProps> = ({ roomName, participantName, isRoomCreator, o
           setIsCameraOn(false);
         }
         
+        // Handle page refresh - preserve connection state
+        const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+          console.log('Page is being refreshed, preserving connection state');
+          if (liveKitManagerRef.current) {
+            // Store connection state in sessionStorage
+            sessionStorage.setItem('livekit-connection-state', JSON.stringify({
+              roomName,
+              participantName,
+              isRoomCreator,
+              isConnected: liveKitManagerRef.current.isConnected(),
+              timestamp: Date.now()
+            }));
+            
+            // Store camera and microphone state
+            const localParticipant = participants.find(p => p.isLocal);
+            if (localParticipant) {
+              sessionStorage.setItem('livekit-media-state', JSON.stringify({
+                isCameraOn: localParticipant.isCameraOn,
+                isMuted: localParticipant.isMuted,
+                timestamp: Date.now()
+              }));
+            }
+          }
+        };
+        
+        window.addEventListener('beforeunload', handleBeforeUnload);
+        
+        // Check for existing connection state on page load and restore if recent
+        const savedState = sessionStorage.getItem('livekit-connection-state');
+        const savedMediaState = sessionStorage.getItem('livekit-media-state');
+        
+        if (savedState) {
+          try {
+            const state = JSON.parse(savedState);
+            const mediaState = savedMediaState ? JSON.parse(savedMediaState) : null;
+            
+            // Only restore if it's the same room/participant and connection was recent (within 30 seconds)
+            const isRecentConnection = state.timestamp && (Date.now() - state.timestamp) < 30000;
+            
+            if (state.roomName === roomName && state.participantName === participantName && isRecentConnection) {
+              console.log('Restoring connection state from session storage');
+              
+              // Restore media state after connection is established
+              if (mediaState) {
+                setTimeout(() => {
+                  if (mediaState.isCameraOn && !isCameraOn) {
+                    console.log('Restoring camera state after page refresh');
+                    toggleCamera();
+                  }
+                  if (!mediaState.isMuted && isMuted) {
+                    console.log('Restoring microphone state after page refresh');
+                    toggleMute();
+                  }
+                }, 2000); // Wait for connection to be fully established
+              }
+            } else {
+              // Clear old state
+              sessionStorage.removeItem('livekit-connection-state');
+              sessionStorage.removeItem('livekit-media-state');
+            }
+          } catch (error) {
+            console.error('Failed to parse saved connection state:', error);
+            sessionStorage.removeItem('livekit-connection-state');
+            sessionStorage.removeItem('livekit-media-state');
+          }
+        }
+        
         setIsConnecting(false);
 
       } catch (error) {
@@ -304,7 +371,7 @@ const Room: React.FC<RoomProps> = ({ roomName, participantName, isRoomCreator, o
 
   const refreshTracks = () => {
     if (liveKitManagerRef.current) {
-      liveKitManagerRef.current.refreshVideoTracks();
+      liveKitManagerRef.current.refreshAllParticipantTracks();
     }
   };
 
