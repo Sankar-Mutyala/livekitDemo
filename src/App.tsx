@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import Room from './components/Room';
 import RoomJoin from './components/RoomJoin';
+import ErrorBoundary from './components/ErrorBoundary';
 
 function App() {
   const [roomName, setRoomName] = useState<string>('');
@@ -24,16 +25,18 @@ function App() {
 
   return (
     <div className="App">
-      {!isInRoom ? (
-        <RoomJoin onJoinRoom={joinRoom} />
-      ) : (
-        <Room
-          roomName={roomName}
-          participantName={participantName}
-          isRoomCreator={isRoomCreator}
-          onLeaveRoom={leaveRoom}
-        />
-      )}
+      <ErrorBoundary>
+        {!isInRoom ? (
+          <RoomJoin onJoinRoom={joinRoom} />
+        ) : (
+          <Room
+            roomName={roomName}
+            participantName={participantName}
+            isRoomCreator={isRoomCreator}
+            onLeaveRoom={leaveRoom}
+          />
+        )}
+      </ErrorBoundary>
     </div>
   );
 }

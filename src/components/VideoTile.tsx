@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useCallback } from 'react';
 import { cn } from '../lib/utils';
 import { ParticipantData } from '../lib/livekit';
 
@@ -9,12 +9,139 @@ interface VideoTileProps {
   onAudioLevel?: (identity: string, level: number) => void;
 }
 
+// Global AudioContext to prevent multiple contexts
+let globalAudioContext: AudioContext | null = null;
+const getGlobalAudioContext = () => {
+  if (!globalAudioContext) {
+    globalAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+  }
+  return globalAudioContext;
+};
+
 const VideoTile: React.FC<VideoTileProps> = ({ participantData, className, isMain = false, onAudioLevel }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const rafRef = useRef<number | null>(null);
+  const sourceNodeRef = useRef<MediaElementAudioSourceNode | MediaStreamAudioSourceNode | null>(null);
+  const isAttachedRef = useRef<boolean>(false);
+
+  // Stable callback for audio level reporting
+  const handleAudioLevel = useCallback((level: number) => {
+    if (typeof onAudioLevel === 'function') {
+      onAudioLevel(participantData.participant.identity, level);
+    }
+  }, [onAudioLevel, participantData.participant.identity]);
+
+  // Cleanup function
+  const cleanup = useCallback(() => {
+    // Stop animation frame
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+
+    // Disconnect analyser
+    if (analyserRef.current) {
+      try {
+        analyserRef.current.disconnect();
+      } catch (e) {
+        // Ignore disconnect errors
+      }
+      analyserRef.current = null;
+    }
+
+    // Disconnect source node
+    if (sourceNodeRef.current) {
+      try {
+        sourceNodeRef.current.disconnect();
+      } catch (e) {
+        // Ignore disconnect errors
+      }
+      sourceNodeRef.current = null;
+    }
+
+    isAttachedRef.current = false;
+  }, []);
+
+  // Setup audio analyser
+  const setupAudioAnalyser = useCallback(() => {
+    if (!audioRef.current || !onAudioLevel || analyserRef.current || isAttachedRef.current) {
+      return;
+    }
+
+    // Additional check to prevent multiple connections
+    if (audioRef.current.srcObject && audioRef.current.srcObject instanceof MediaStream) {
+      // For MediaStream, we can safely create a new source each time
+    } else if (audioRef.current.src) {
+      // For regular audio sources, check if already connected
+      try {
+        const audioCtx = getGlobalAudioContext();
+        // This will throw if the element is already connected
+        audioCtx.createMediaElementSource(audioRef.current);
+      } catch (e) {
+        console.warn('Audio element already connected to AudioContext, skipping analyser setup');
+        return;
+      }
+    }
+
+    try {
+      const audioCtx = getGlobalAudioContext();
+      
+      // Check if audio element is already connected and not already attached
+      if ((audioRef.current.srcObject || audioRef.current.src) && !isAttachedRef.current) {
+        let source;
+        
+        // Use MediaStreamAudioSourceNode if we have a MediaStream, otherwise use MediaElementAudioSourceNode
+        if (audioRef.current.srcObject && audioRef.current.srcObject instanceof MediaStream) {
+          source = audioCtx.createMediaStreamSource(audioRef.current.srcObject);
+        } else {
+          source = audioCtx.createMediaElementSource(audioRef.current);
+        }
+        
+        const analyser = audioCtx.createAnalyser();
+        
+        analyser.fftSize = 2048;
+        analyser.smoothingTimeConstant = 0.8;
+        
+        source.connect(analyser);
+        analyser.connect(audioCtx.destination);
+        
+        analyserRef.current = analyser;
+        sourceNodeRef.current = source;
+        isAttachedRef.current = true;
+
+        const data = new Uint8Array(analyser.frequencyBinCount);
+
+        const tick = () => {
+          if (!analyserRef.current) return;
+          
+          try {
+            analyserRef.current.getByteFrequencyData(data);
+            
+            // Compute RMS (Root Mean Square) for better audio level detection
+            let sum = 0;
+            for (let i = 0; i < data.length; i++) {
+              const v = data[i] / 255;
+              sum += v * v;
+            }
+            const rms = Math.sqrt(sum / data.length);
+            
+            // Apply smoothing and report level
+            handleAudioLevel(Math.min(rms * 2, 1)); // Amplify and cap at 1
+          } catch (e) {
+            // Ignore errors during cleanup
+          }
+          
+          rafRef.current = requestAnimationFrame(tick);
+        };
+
+        rafRef.current = requestAnimationFrame(tick);
+      }
+    } catch (e) {
+      console.warn('Failed to create audio analyser:', e);
+    }
+  }, [onAudioLevel, handleAudioLevel]);
 
   useEffect(() => {
     console.log('VideoTile useEffect:', {
@@ -26,20 +153,51 @@ const VideoTile: React.FC<VideoTileProps> = ({ participantData, className, isMai
       trackEnabled: (participantData.videoTrack as any)?.enabled
     });
 
-    // Attach video track to video element
-    if (participantData.videoTrack && videoRef.current) {
+    // Cleanup previous attachments
+    cleanup();
+
+    // Attach video track to video element with retry logic
+    if (participantData.videoTrack && videoRef.current && participantData.isCameraOn) {
       console.log('Attaching video track to element');
-      try {
-        participantData.videoTrack.attach(videoRef.current);
-        console.log('Video track attached successfully');
-      } catch (error) {
-        console.error('Failed to attach video track:', error);
-      }
+      
+      const attachVideoTrack = () => {
+        try {
+          // Only detach if we have a different track
+          if (videoRef.current?.srcObject && videoRef.current.srcObject !== participantData.videoTrack?.mediaStream) {
+            videoRef.current.srcObject = null;
+          }
+          
+          // Attach the new track
+          participantData.videoTrack!.attach(videoRef.current!);
+          console.log('Video track attached successfully');
+          isAttachedRef.current = true;
+        } catch (error) {
+          console.error('Failed to attach video track:', error);
+          isAttachedRef.current = false;
+          
+          // Retry attachment after a short delay, but only once
+          setTimeout(() => {
+            if (participantData.videoTrack && videoRef.current && !isAttachedRef.current && participantData.isCameraOn) {
+              console.log('Retrying video track attachment...');
+              try {
+                participantData.videoTrack!.attach(videoRef.current!);
+                isAttachedRef.current = true;
+              } catch (retryError) {
+                console.error('Retry failed:', retryError);
+              }
+            }
+          }, 1000); // Increased delay
+        }
+      };
+      
+      attachVideoTrack();
     } else {
       console.log('Cannot attach video track:', {
         hasTrack: !!participantData.videoTrack,
-        hasElement: !!videoRef.current
+        hasElement: !!videoRef.current,
+        isCameraOn: participantData.isCameraOn
       });
+      isAttachedRef.current = false;
     }
 
     // Attach audio track to audio element
@@ -47,50 +205,13 @@ const VideoTile: React.FC<VideoTileProps> = ({ participantData, className, isMai
       try {
         participantData.audioTrack.attach(audioRef.current);
         console.log('Audio track attached successfully');
+        
+        // Setup audio analyser after a short delay to ensure track is ready
+        setTimeout(() => {
+          setupAudioAnalyser();
+        }, 100);
       } catch (error) {
         console.error('Failed to attach audio track:', error);
-      }
-    }
-
-    // Setup WebAudio analyser to report audio level if callback provided
-    if (audioRef.current && typeof onAudioLevel === 'function' && !analyserRef.current) {
-      try {
-        // Create AudioContext lazily
-        if (!audioContextRef.current) {
-          audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-        }
-
-        const audioCtx = audioContextRef.current;
-        const source = audioCtx.createMediaElementSource(audioRef.current);
-        const analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 2048;
-        source.connect(analyser);
-        analyser.connect(audioCtx.destination);
-        analyserRef.current = analyser;
-
-        const data = new Uint8Array(analyser.frequencyBinCount);
-
-        const tick = () => {
-          try {
-            analyser.getByteFrequencyData(data);
-            // compute RMS
-            let sum = 0;
-            for (let i = 0; i < data.length; i++) {
-              const v = data[i] / 255;
-              sum += v * v;
-            }
-            const rms = Math.sqrt(sum / data.length);
-            // report level (0..1)
-            onAudioLevel?.(participantData.participant.identity, rms);
-          } catch (e) {
-            // ignore occasional errors during detach
-          }
-          rafRef.current = requestAnimationFrame(tick);
-        };
-
-        rafRef.current = requestAnimationFrame(tick);
-      } catch (e) {
-        console.warn('Failed to create audio analyser:', e);
       }
     }
 
@@ -110,18 +231,9 @@ const VideoTile: React.FC<VideoTileProps> = ({ participantData, className, isMai
           console.error('Failed to detach audio track:', error);
         }
       }
-      // cleanup analyser
-      if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
-      if (analyserRef.current) {
-        try { analyserRef.current.disconnect(); } catch {};
-        analyserRef.current = null;
-      }
-      // Note: do not close shared AudioContext here as it may be reused
+      cleanup();
     };
-  }, [participantData.videoTrack, participantData.audioTrack, participantData.isCameraOn]);
+  }, [participantData.videoTrack, participantData.audioTrack, participantData.isCameraOn, setupAudioAnalyser, cleanup]);
 
   const getInitials = (name: string) => {
     return name

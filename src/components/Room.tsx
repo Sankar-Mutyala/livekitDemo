@@ -26,6 +26,8 @@ const Room: React.FC<RoomProps> = ({ roomName, participantName, isRoomCreator, o
   const [layoutMode, setLayoutMode] = useState<'gallery' | 'speaker'>('gallery');
   const [audioLevels, setAudioLevels] = useState<Record<string, number>>({});
   const [dominantSpeaker, setDominantSpeaker] = useState<string | null>(null);
+  const [isTogglingCamera, setIsTogglingCamera] = useState(false);
+  const [isTogglingMicrophone, setIsTogglingMicrophone] = useState(false);
   const liveKitManagerRef = useRef<LiveKitManager | null>(null);
 
   useEffect(() => {
@@ -48,13 +50,41 @@ const Room: React.FC<RoomProps> = ({ roomName, participantName, isRoomCreator, o
             if (!connected) {
               console.log('Room disconnected, attempting reconnection...');
               setConnectionAttempts(prev => prev + 1);
-              // Attempt reconnection after a delay
+              // Only attempt reconnection if we haven't exceeded max attempts
+              if (connectionAttempts < 2) { // Reduced from 3 to 2
+                setTimeout(() => {
+                  if (liveKitManagerRef.current && !liveKitManagerRef.current.isConnected()) {
+                    console.log('Attempting automatic reconnection...');
+                    retryConnection();
+                  }
+                }, 8000); // Increased delay to prevent aggressive reconnection
+              } else {
+                console.log('Max reconnection attempts reached, stopping automatic reconnection');
+              }
+            } else {
+              // When reconnected, only restore camera if it was actually on before disconnection
               setTimeout(() => {
-                if (liveKitManagerRef.current && !liveKitManagerRef.current.isConnected()) {
-                  console.log('Attempting automatic reconnection...');
-                  retryConnection();
+                if (liveKitManagerRef.current) {
+                  const trackedCameraState = liveKitManagerRef.current.getCameraState();
+                  
+                  // Only restore if camera was actually on before disconnection
+                  if (trackedCameraState) {
+                    console.log('Restoring camera after reconnection...', { 
+                      trackedCameraState, 
+                      uiState: isCameraOn
+                    });
+                    
+                    // Update UI state to match
+                    setIsCameraOn(true);
+                    
+                    // Let the LiveKit manager handle the actual restoration
+                    liveKitManagerRef.current.forceCameraRestoration();
+                  } else {
+                    // Camera was off, just refresh tracks without forcing camera on
+                    liveKitManagerRef.current.refreshVideoTracks();
+                  }
                 }
-              }, 3000);
+              }, 3000); // Reduced delay for faster restoration
             }
           }
         );
@@ -68,6 +98,16 @@ const Room: React.FC<RoomProps> = ({ roomName, participantName, isRoomCreator, o
         };
 
         await manager.connect(config, roomName, participantName, isRoomCreator);
+        
+        // Set initial camera state based on UI state
+        manager.setCameraState(isCameraOn);
+        
+        // Don't start with camera on by default to prevent auto-disable issues
+        if (isCameraOn) {
+          console.log('Initial camera state is on, but will wait for user to explicitly enable');
+          setIsCameraOn(false);
+        }
+        
         setIsConnecting(false);
 
       } catch (error) {
@@ -87,44 +127,108 @@ const Room: React.FC<RoomProps> = ({ roomName, participantName, isRoomCreator, o
   }, [roomName, participantName, isRoomCreator]);
 
   const toggleMute = async () => {
-    if (liveKitManagerRef.current) {
-      try {
-        // Check connection state before attempting to toggle
-        const connectionState = liveKitManagerRef.current.getConnectionState();
-        console.log('Current connection state:', connectionState);
-        
-        if (!liveKitManagerRef.current.isConnected()) {
-          console.warn('Room not connected, cannot toggle microphone');
-          alert('Room is not connected. Please click "Reconnect" to restore connection.');
-          return;
-        }
-        
-        await liveKitManagerRef.current.toggleMicrophone();
-      } catch (error) {
-        console.error('Failed to toggle microphone:', error);
-        alert('Failed to toggle microphone. Please try again.');
+    if (!liveKitManagerRef.current) {
+      console.warn('LiveKit manager not initialized');
+      return;
+    }
+
+    if (isTogglingMicrophone) {
+      console.warn('Microphone toggle already in progress');
+      return;
+    }
+
+    try {
+      setIsTogglingMicrophone(true);
+      
+      // Check connection state before attempting to toggle
+      const connectionInfo = liveKitManagerRef.current.getConnectionInfo();
+      console.log('Current connection info:', connectionInfo);
+      
+      if (!connectionInfo.isConnected) {
+        console.warn('Room not connected, cannot toggle microphone');
+        console.log('Please wait for connection to be established before toggling microphone');
+        return;
       }
+      
+      // Show loading state
+      const originalMuteState = isMuted;
+      
+      await liveKitManagerRef.current.toggleMicrophone();
+      
+      // Update local state immediately for better UX
+      setIsMuted(!originalMuteState);
+      
+    } catch (error) {
+      console.error('Failed to toggle microphone:', error);
+      
+      // Show user-friendly error message
+      if (error instanceof Error) {
+        if (error.message.includes('timeout')) {
+          console.log('Microphone toggle timed out - this is usually due to connection issues');
+        } else if (error.message.includes('not connected')) {
+          console.log('Room is not connected - will retry when connection is restored');
+        } else {
+          console.log(`Microphone toggle failed: ${error.message}`);
+        }
+      } else {
+        console.log('Microphone toggle failed with unknown error');
+      }
+    } finally {
+      setIsTogglingMicrophone(false);
     }
   };
 
   const toggleCamera = async () => {
-    if (liveKitManagerRef.current) {
-      try {
-        // Check connection state before attempting to toggle
-        const connectionState = liveKitManagerRef.current.getConnectionState();
-        console.log('Current connection state:', connectionState);
-        
-        if (!liveKitManagerRef.current.isConnected()) {
-          console.warn('Room not connected, cannot toggle camera');
-          alert('Room is not connected. Please click "Reconnect" to restore connection.');
-          return;
-        }
-        
-        await liveKitManagerRef.current.toggleCamera();
-      } catch (error) {
-        console.error('Failed to toggle camera:', error);
-        alert('Failed to toggle camera. Please try again.');
+    if (!liveKitManagerRef.current) {
+      console.warn('LiveKit manager not initialized');
+      return;
+    }
+
+    if (isTogglingCamera) {
+      console.warn('Camera toggle already in progress');
+      return;
+    }
+
+    try {
+      setIsTogglingCamera(true);
+      
+      // Check connection state before attempting to toggle
+      const connectionInfo = liveKitManagerRef.current.getConnectionInfo();
+      console.log('Current connection info:', connectionInfo);
+      
+      if (!connectionInfo.isConnected) {
+        console.warn('Room not connected, cannot toggle camera');
+        console.log('Please wait for connection to be established before toggling camera');
+        return;
       }
+      
+      // Show loading state
+      const originalCameraState = isCameraOn;
+      
+      await liveKitManagerRef.current.toggleCamera();
+      
+      // Update local state immediately for better UX
+      setIsCameraOn(!originalCameraState);
+      
+    } catch (error) {
+      console.error('Failed to toggle camera:', error);
+      
+      // Show user-friendly error message
+      if (error instanceof Error) {
+        if (error.message.includes('timeout')) {
+          console.log('Camera toggle timed out - this is usually due to connection issues');
+        } else if (error.message.includes('not connected')) {
+          console.log('Room is not connected - will retry when connection is restored');
+        } else if (error.message.includes('publishing rejected')) {
+          console.log('Camera toggle failed due to connection issues - will retry when connection is stable');
+        } else {
+          console.log(`Camera toggle failed: ${error.message}`);
+        }
+      } else {
+        console.log('Camera toggle failed with unknown error');
+      }
+    } finally {
+      setIsTogglingCamera(false);
     }
   };
 
@@ -228,37 +332,79 @@ const Room: React.FC<RoomProps> = ({ roomName, participantName, isRoomCreator, o
     setIsConnecting(true);
     
     try {
-      // Disconnect existing connection
+      // Don't disconnect existing connection - let LiveKit handle reconnection
+      // This preserves existing participants and their state
       if (liveKitManagerRef.current) {
-        await liveKitManagerRef.current.disconnect();
+        console.log('Attempting to reconnect using existing manager...');
+        
+        // Try to reconnect with existing manager first
+        const config = {
+          serverUrl: LIVEKIT_CONFIG.serverUrl,
+          token: await LIVEKIT_CONFIG.generateToken(roomName, participantName),
+        };
+        
+        // Use the existing manager's reconnect method if available
+        if (typeof liveKitManagerRef.current.reconnect === 'function') {
+          await liveKitManagerRef.current.reconnect(config);
+        } else {
+          // Fallback: create new manager but preserve existing participants
+          const existingParticipants = liveKitManagerRef.current.preserveParticipants();
+          console.log('Preserving existing participants:', existingParticipants.length);
+          
+          // Disconnect old manager
+          await liveKitManagerRef.current.disconnect();
+          
+          // Create new manager
+          const manager = new LiveKitManager(
+            (participants) => {
+              setParticipants(participants);
+              const localParticipant = participants.find(p => p.isLocal);
+              if (localParticipant) {
+                setIsMuted(localParticipant.isMuted);
+                setIsCameraOn(localParticipant.isCameraOn);
+              }
+            },
+            (connected) => {
+              setIsConnected(connected);
+            }
+          );
+
+          liveKitManagerRef.current = manager;
+          await manager.connect(config, roomName, participantName, isRoomCreator);
+          
+          // Restore existing participants after connection
+          setTimeout(() => {
+            if (existingParticipants.length > 0) {
+              manager.restoreParticipants(existingParticipants);
+            }
+          }, 2000);
+        }
+      } else {
+        // No existing manager, create new one
+        const manager = new LiveKitManager(
+          (participants) => {
+            setParticipants(participants);
+            const localParticipant = participants.find(p => p.isLocal);
+            if (localParticipant) {
+              setIsMuted(localParticipant.isMuted);
+              setIsCameraOn(localParticipant.isCameraOn);
+            }
+          },
+          (connected) => {
+            setIsConnected(connected);
+          }
+        );
+
+        liveKitManagerRef.current = manager;
+
+        const config = {
+          serverUrl: LIVEKIT_CONFIG.serverUrl,
+          token: await LIVEKIT_CONFIG.generateToken(roomName, participantName),
+        };
+
+        await manager.connect(config, roomName, participantName, isRoomCreator);
       }
       
-      // Wait a moment before retrying
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Reconnect
-      const manager = new LiveKitManager(
-        (participants) => {
-          setParticipants(participants);
-          const localParticipant = participants.find(p => p.isLocal);
-          if (localParticipant) {
-            setIsMuted(localParticipant.isMuted);
-            setIsCameraOn(localParticipant.isCameraOn);
-          }
-        },
-        (connected) => {
-          setIsConnected(connected);
-        }
-      );
-
-      liveKitManagerRef.current = manager;
-
-      const config = {
-        serverUrl: LIVEKIT_CONFIG.serverUrl,
-        token: await LIVEKIT_CONFIG.generateToken(roomName, participantName),
-      };
-
-      await manager.connect(config, roomName, participantName, isRoomCreator);
       setIsConnecting(false);
       
     } catch (error) {
@@ -572,6 +718,8 @@ const Room: React.FC<RoomProps> = ({ roomName, participantName, isRoomCreator, o
         onToggleCamera={toggleCamera}
         onToggleScreenShare={toggleScreenShare}
         onLeaveRoom={onLeaveRoom}
+        isTogglingMicrophone={isTogglingMicrophone}
+        isTogglingCamera={isTogglingCamera}
       />
 
       {/* Share Modal */}

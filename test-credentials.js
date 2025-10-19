@@ -2,8 +2,8 @@
 const crypto = require('crypto');
 
 // Replace these with your actual credentials from LiveKit Cloud
-const API_KEY = 'APIxC7TmCridcUg';
-const API_SECRET = 'pjNoDnaUr8lU7wIkJcdQLHENiQztmOcgguA2whQpgYL';
+const API_KEY = 'APIB2aqRGFAhxAY';
+const API_SECRET = 'K9PmxEGU152RJZGxRvLD9Bf8LfPKPQeteFy1gjhrIt3B';
 
 function generateLiveKitToken(apiKey, apiSecret, roomName, identity, name) {
   const now = Math.floor(Date.now() / 1000);
