@@ -28,6 +28,7 @@ const Room: React.FC<RoomProps> = ({ roomName, participantName, isRoomCreator, o
   const [dominantSpeaker, setDominantSpeaker] = useState<string | null>(null);
   const [isTogglingCamera, setIsTogglingCamera] = useState(false);
   const [isTogglingMicrophone, setIsTogglingMicrophone] = useState(false);
+  const [windowSize, setWindowSize] = useState({ width: window.innerWidth, height: window.innerHeight });
   const liveKitManagerRef = useRef<LiveKitManager | null>(null);
 
   useEffect(() => {
@@ -193,6 +194,16 @@ const Room: React.FC<RoomProps> = ({ roomName, participantName, isRoomCreator, o
     };
   }, [roomName, participantName, isRoomCreator]);
 
+  // Window resize listener for responsive grid
+  useEffect(() => {
+    const handleResize = () => {
+      setWindowSize({ width: window.innerWidth, height: window.innerHeight });
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   const toggleMute = async () => {
     if (!liveKitManagerRef.current) {
       console.warn('LiveKit manager not initialized');
@@ -272,6 +283,9 @@ const Room: React.FC<RoomProps> = ({ roomName, participantName, isRoomCreator, o
       // Show loading state
       const originalCameraState = isCameraOn;
       
+      // Add delay to prevent RTC connection issues
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
       await liveKitManagerRef.current.toggleCamera();
       
       // Update local state immediately for better UX
@@ -280,9 +294,23 @@ const Room: React.FC<RoomProps> = ({ roomName, participantName, isRoomCreator, o
     } catch (error) {
       console.error('Failed to toggle camera:', error);
       
-      // Show user-friendly error message
+      // Handle specific RTC errors
       if (error instanceof Error) {
-        if (error.message.includes('timeout')) {
+        if (error.message.includes('replaceTrack') || error.message.includes('peer connection is closed')) {
+          console.log('RTC connection issue detected, attempting to refresh tracks...');
+          // Try to refresh tracks and retry
+          setTimeout(async () => {
+            try {
+              if (liveKitManagerRef.current) {
+                await liveKitManagerRef.current.refreshVideoTracks();
+                await liveKitManagerRef.current.toggleCamera();
+                setIsCameraOn(!isCameraOn);
+              }
+            } catch (retryError) {
+              console.error('Retry failed:', retryError);
+            }
+          }, 1000);
+        } else if (error.message.includes('timeout')) {
           console.log('Camera toggle timed out - this is usually due to connection issues');
         } else if (error.message.includes('not connected')) {
           console.log('Room is not connected - will retry when connection is restored');
@@ -481,6 +509,76 @@ const Room: React.FC<RoomProps> = ({ roomName, participantName, isRoomCreator, o
     }
   };
 
+  // Zoom-like responsive grid calculation
+  const getZoomLikeGridConfig = (participantCount: number) => {
+    const { width, height } = windowSize;
+    const aspectRatio = width / height;
+    const isMobile = width <= 768;
+    const isTablet = width > 768 && width <= 1024;
+    const isDesktop = width > 1024;
+    
+    // Zoom's approach: prioritize optimal viewing experience
+    if (participantCount === 1) {
+      return { cols: 1, rows: 1, layout: 'single' };
+    }
+    
+    if (participantCount === 2) {
+      if (isMobile) {
+        return { cols: 1, rows: 2, layout: 'stacked' };
+      }
+      return { cols: 2, rows: 1, layout: 'side-by-side' };
+    }
+    
+    if (participantCount === 3) {
+      if (isMobile) {
+        return { cols: 1, rows: 3, layout: 'stacked' };
+      }
+      return { cols: 2, rows: 2, layout: 'grid' };
+    }
+    
+    if (participantCount === 4) {
+      if (isMobile) {
+        return { cols: 2, rows: 2, layout: 'grid' };
+      }
+      return { cols: 2, rows: 2, layout: 'grid' };
+    }
+    
+    if (participantCount <= 6) {
+      if (isMobile) {
+        return { cols: 2, rows: 3, layout: 'grid' };
+      }
+      if (isTablet) {
+        return { cols: 3, rows: 2, layout: 'grid' };
+      }
+      return { cols: 3, rows: 2, layout: 'grid' };
+    }
+    
+    if (participantCount <= 9) {
+      if (isMobile) {
+        return { cols: 3, rows: 3, layout: 'grid' };
+      }
+      if (isTablet) {
+        return { cols: 3, rows: 3, layout: 'grid' };
+      }
+      return { cols: 3, rows: 3, layout: 'grid' };
+    }
+    
+    if (participantCount <= 12) {
+      if (isMobile) {
+        return { cols: 3, rows: 4, layout: 'grid' };
+      }
+      if (isTablet) {
+        return { cols: 4, rows: 3, layout: 'grid' };
+      }
+      return { cols: 4, rows: 3, layout: 'grid' };
+    }
+    
+    // For more than 12 participants, use a more compact grid
+    const optimalCols = isMobile ? 3 : isTablet ? 4 : 5;
+    const rows = Math.ceil(participantCount / optimalCols);
+    return { cols: optimalCols, rows, layout: 'compact' };
+  };
+
   const getLayoutClass = () => {
     const participantCount = participants.length;
     
@@ -574,32 +672,9 @@ const Room: React.FC<RoomProps> = ({ roomName, participantName, isRoomCreator, o
         );
       }
     } else {
-      // Deterministic mappings for common counts (1,2,3,4,6,9,12).
-      // This ensures consistent UX and avoids fractional grid math variations.
-      const count = participantCount;
-      let cols = Math.max(1, Math.ceil(Math.sqrt(count)));
-      let rows = Math.max(1, Math.ceil(count / cols));
-
-      // Map exact layouts per your scenarios for better control
-      switch (count) {
-        case 1:
-          cols = 1; rows = 1; break;
-        case 2:
-          cols = 2; rows = 1; break;
-        case 3:
-          cols = 2; rows = 2; break; // we'll center the bottom tile via CSS class
-        case 4:
-          cols = 2; rows = 2; break;
-        case 6:
-          cols = 3; rows = 2; break;
-        case 9:
-          cols = 3; rows = 3; break;
-        case 12:
-          cols = 4; rows = 3; break;
-        default:
-          cols = Math.max(1, Math.ceil(Math.sqrt(count)));
-          rows = Math.max(1, Math.ceil(count / cols));
-      }
+      // Use Zoom-like responsive grid configuration
+      const gridConfig = getZoomLikeGridConfig(participantCount);
+      const { cols, rows } = gridConfig;
 
       // Speaker mode: if enabled and we have a dominant speaker, promote them
       if (layoutMode === 'speaker' && dominantSpeaker) {
@@ -629,7 +704,7 @@ const Room: React.FC<RoomProps> = ({ roomName, participantName, isRoomCreator, o
         >
           {participants.map((participantData, idx) => {
             // for 3 participants, center the last tile on the bottom row
-            const extraClass = (count === 3 && idx === 2) ? 'span-bottom' : '';
+            const extraClass = (participantCount === 3 && idx === 2) ? 'span-bottom' : '';
             return (
               <VideoTile
                 key={participantData.participant.identity}

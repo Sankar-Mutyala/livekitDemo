@@ -58,12 +58,13 @@
   }
 }
 
-/* Custom video layout styles */
+/* Zoom-like responsive video layout styles */
 .video-container {
   /* Make the video area a stable flex child that does not create page scrolling.
      The grid inside will size itself using --rows/--cols provided by the React code. */
   @apply flex-1 relative flex bg-black min-h-0;
   overflow: hidden;
+  transition: all 0.3s ease-in-out;
 }
 
 .layout-two-creator {
@@ -110,35 +111,43 @@
   @apply grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-0;
 }
 
-/* New responsive participants grid using CSS variable --cols */
+/* Zoom-like responsive participants grid */
 .participants-grid-grid {
   /* Deterministic grid. --cols and --rows are set by Room.tsx so we
      can enforce a fixed grid (no vertical page scroll). */
   display: grid;
   grid-template-columns: repeat(var(--cols, 1), 1fr);
   grid-template-rows: repeat(var(--rows, 1), 1fr);
-  gap: 8px; /* tighter gap for a denser grid */
+  gap: 4px; /* Zoom-like tighter gaps */
   align-items: stretch;
   width: 100%;
   /* reserve topbar + controls using CSS variables so this grid fills
      the remaining viewport height exactly */
   height: calc(100vh - var(--topbar,72px) - var(--controls,96px));
-  padding: 8px;
+  padding: 4px;
   box-sizing: border-box;
   overflow: hidden;
+  transition: all 0.3s ease-in-out;
 }
 
 .participants-grid-grid .grid-video {
-  /* Fill the grid cell entirely */
+  /* Fill the grid cell entirely with Zoom-like styling */
   width: 100%;
   height: 100%;
   aspect-ratio: 16 / 9; /* fallback; primary sizing via grid-template-rows */
-  min-height: 96px;
-  @apply relative overflow-hidden rounded-sm bg-zinc-800;
+  min-height: 80px;
+  @apply relative overflow-hidden rounded-lg bg-zinc-800;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 6px 18px rgba(0,0,0,0.45);
-  border: 1px solid rgba(255,255,255,0.03);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  border: 1px solid rgba(255,255,255,0.1);
+  transition: all 0.3s ease-in-out;
+}
+
+.participants-grid-grid .grid-video:hover {
+  transform: scale(1.02);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  border-color: rgba(255,255,255,0.2);
 }
 
 /* Speaker view: large main tile and compact strip of others */
@@ -261,16 +270,63 @@
   @apply bg-destructive/90;
 }
 
-@media (max-width: 768px) {
+/* Zoom-like responsive breakpoints */
+
+/* Mobile phones (portrait) */
+@media (max-width: 480px) {
+  .participants-grid-grid {
+    gap: 2px;
+    padding: 2px;
+    height: calc(100vh - var(--topbar,60px) - var(--controls,80px));
+  }
+  
+  .participants-grid-grid .grid-video {
+    min-height: 60px;
+    border-radius: 4px;
+  }
+  
   .layout-two-creator .preview-video,
   .layout-two-participant .preview-video,
   .layout-three-creator .preview-video {
-    @apply w-32 h-24 top-2 right-2;
+    @apply w-20 h-16 top-1 right-1;
   }
   
-  .layout-three-creator .participants-grid,
-  .layout-three-participant .participants-grid {
-    @apply grid-cols-1 grid-rows-2;
+  .control-buttons {
+    @apply gap-1 p-1;
+  }
+  
+  .control-button {
+    @apply w-8 h-8;
+  }
+  
+  .room-controls {
+    @apply bottom-2;
+  }
+  
+  .participant-name {
+    @apply text-xs;
+  }
+  
+  .creator-badge {
+    @apply text-xs px-1 py-0.5;
+  }
+}
+
+/* Mobile phones (landscape) and small tablets */
+@media (min-width: 481px) and (max-width: 768px) {
+  .participants-grid-grid {
+    gap: 3px;
+    padding: 3px;
+  }
+  
+  .participants-grid-grid .grid-video {
+    min-height: 70px;
+  }
+  
+  .layout-two-creator .preview-video,
+  .layout-two-participant .preview-video,
+  .layout-three-creator .preview-video {
+    @apply w-24 h-20 top-2 right-2;
   }
   
   .control-buttons {
@@ -283,5 +339,78 @@
   
   .room-controls {
     @apply bottom-4;
+  }
+}
+
+/* Tablets */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .participants-grid-grid {
+    gap: 4px;
+    padding: 6px;
+  }
+  
+  .participants-grid-grid .grid-video {
+    min-height: 90px;
+  }
+  
+  .layout-two-creator .preview-video,
+  .layout-two-participant .preview-video,
+  .layout-three-creator .preview-video {
+    @apply w-32 h-24 top-3 right-3;
+  }
+}
+
+/* Desktop and larger screens */
+@media (min-width: 1025px) {
+  .participants-grid-grid {
+    gap: 6px;
+    padding: 8px;
+  }
+  
+  .participants-grid-grid .grid-video {
+    min-height: 100px;
+  }
+  
+  .layout-two-creator .preview-video,
+  .layout-two-participant .preview-video,
+  .layout-three-creator .preview-video {
+    @apply w-40 h-32 top-4 right-4;
+  }
+}
+
+/* Ultra-wide screens */
+@media (min-width: 1440px) {
+  .participants-grid-grid {
+    gap: 8px;
+    padding: 12px;
+  }
+  
+  .participants-grid-grid .grid-video {
+    min-height: 120px;
+  }
+}
+
+/* Landscape orientation adjustments */
+@media (orientation: landscape) and (max-height: 600px) {
+  .participants-grid-grid {
+    height: calc(100vh - var(--topbar,50px) - var(--controls,60px));
+    gap: 2px;
+    padding: 2px;
+  }
+  
+  .participants-grid-grid .grid-video {
+    min-height: 50px;
+  }
+  
+  .room-controls {
+    @apply bottom-2;
+  }
+  
+  .control-buttons {
+    @apply gap-1 p-1;
+  }
+  
+  .control-button {
+    @apply w-8 h-8;
   }
 }
